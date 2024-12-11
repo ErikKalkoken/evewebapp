@@ -26,9 +26,8 @@ type app struct {
 	esiClient *goesi.APIClient
 	store     *sessions.CookieStore
 
-	tokenSource   oauth2.TokenSource
-	characterID   int
-	characterName string
+	tokens     map[int]oauth2.TokenSource
+	characters map[int]string
 }
 
 func newApp(clientID, clientSecret, callbackURL, sessionKey string) *app {
@@ -43,8 +42,10 @@ func newApp(clientID, clientSecret, callbackURL, sessionKey string) *app {
 			},
 			RedirectURL: callbackURL,
 		},
-		store:     sessions.NewCookieStore([]byte(sessionKey)),
-		esiClient: goesi.NewAPIClient(http.DefaultClient, userAgent),
+		store:      sessions.NewCookieStore([]byte(sessionKey)),
+		esiClient:  goesi.NewAPIClient(http.DefaultClient, userAgent),
+		tokens:     make(map[int]oauth2.TokenSource),
+		characters: make(map[int]string),
 	}
 	return a
 }
@@ -68,8 +69,7 @@ func (a *app) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Sessi
 	state := base64.URLEncoding.EncodeToString(b)
 	// Store state in session
 	s.Values["state"] = state
-	err := s.Save(r, w)
-	if err != nil {
+	if err := s.Save(r, w); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -106,24 +106,39 @@ func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Se
 	}
 
 	// Verify the token & extract character details
-	a.characterID, a.characterName, err = extractCharacter(token)
+	characterID, characterName, err := extractCharacter(token)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	a.tokenSource = a.oauth.TokenSource(ctx, tok)
+	a.characters[characterID] = characterName
+	a.tokens[characterID] = a.oauth.TokenSource(ctx, tok)
+	s.Values["characterID"] = characterID
+	if err := s.Save(r, w); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/show-medals", 302)
 }
 
 func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
-	ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, a.tokenSource)
-	medals, _, err := a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(a.characterID), nil)
+	characterID, ok := s.Values["characterID"].(int)
+	if !ok {
+		http.Error(w, "not logged in", http.StatusUnauthorized)
+		return
+	}
+	token, ok := a.tokens[characterID]
+	if !ok {
+		http.Error(w, "token not found", http.StatusInternalServerError)
+		return
+	}
+	ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, token)
+	medals, _, err := a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(characterID), nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fmt.Fprintf(w, "Medals for %s\n\n", a.characterName)
+	fmt.Fprintf(w, "Medals for %s\n\n", a.characters[characterID])
 	if len(medals) == 0 {
 		fmt.Fprintln(w, "No medals")
 	} else {
