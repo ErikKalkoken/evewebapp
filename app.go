@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"text/template"
 
 	"github.com/antihax/goesi"
+	"github.com/antihax/goesi/esi"
 	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
 )
@@ -22,16 +26,22 @@ const (
 
 var oauthScopes = []string{"esi-characters.read_medals.v1"}
 
+var (
+	//go:embed templates/*
+	templatesFS embed.FS
+)
+
 type app struct {
 	oauth     oauth2.Config
 	esiClient *goesi.APIClient
 	store     *sessions.CookieStore
+	templates map[string]*template.Template
 
 	tokens     map[int]oauth2.TokenSource
 	characters map[int]string
 }
 
-func newApp(clientID, clientSecret, callbackURL, sessionKey string) *app {
+func newApp(clientID, clientSecret, callbackURL, sessionKey string) (*app, error) {
 	a := &app{
 		oauth: oauth2.Config{
 			ClientID:     clientID,
@@ -47,8 +57,31 @@ func newApp(clientID, clientSecret, callbackURL, sessionKey string) *app {
 		esiClient:  goesi.NewAPIClient(http.DefaultClient, userAgent),
 		tokens:     make(map[int]oauth2.TokenSource),
 		characters: make(map[int]string),
+		templates:  make(map[string]*template.Template),
 	}
-	return a
+	if err := a.loadTemplates(); err != nil {
+		return nil, fmt.Errorf("loading templates: %w", err)
+	}
+	return a, nil
+}
+
+// LoadTemplates loads and parses all html templates.
+func (a *app) loadTemplates() error {
+	files, err := fs.ReadDir(templatesFS, "templates")
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		t, err := template.ParseFS(templatesFS, "templates/"+f.Name(), "templates/base.html")
+		if err != nil {
+			return err
+		}
+		a.templates[f.Name()] = t
+	}
+	return nil
 }
 
 // makeHandler converts our custom handlers so we can add sessions and handle errors better.
@@ -66,7 +99,11 @@ func (a *app) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessions.
 }
 
 func (a *app) index(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
-	fmt.Fprint(w, `<a href="/sso/start">Login</a>`)
+	t, ok := a.templates["index.html"]
+	if !ok {
+		return http.StatusInternalServerError, fmt.Errorf("index.html")
+	}
+	t.Execute(w, nil)
 	return http.StatusOK, nil
 }
 
@@ -139,13 +176,17 @@ func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Ses
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	fmt.Fprintf(w, "Medals for %s\n\n", a.characters[characterID])
-	if len(medals) == 0 {
-		fmt.Fprintln(w, "No medals")
-	} else {
-		for _, m := range medals {
-			fmt.Fprintf(w, "%s\n", m.Title)
-		}
+	data := struct {
+		Character string
+		Medals    []esi.GetCharactersCharacterIdMedals200Ok
+	}{
+		a.characters[characterID],
+		medals,
 	}
+	t, ok := a.templates["medals.html"]
+	if !ok {
+		return http.StatusInternalServerError, fmt.Errorf("medals.html")
+	}
+	t.Execute(w, data)
 	return http.StatusOK, nil
 }

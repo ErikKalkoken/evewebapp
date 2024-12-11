@@ -25,7 +25,10 @@ func main() {
 		log.Fatal("SSO client ID, client secret or session key not defined")
 	}
 	callbackURL := "http://" + address + callbackPath
-	a := newApp(clientID, clientSecret, callbackURL, sessionKey)
+	a, err := newApp(clientID, clientSecret, callbackURL, sessionKey)
+	if err != nil {
+		log.Fatalf("could not initialize app: %s", err)
+	}
 
 	http.HandleFunc("/", a.makeHandler(a.index))
 	http.HandleFunc("/sso/start", a.makeHandler(a.ssoStart))
