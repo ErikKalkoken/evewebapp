@@ -13,8 +13,13 @@ import (
 )
 
 const (
-	sessionName = "default"
+	sessionName       = "default"
+	oauthAuthorizeURL = "https://login.eveonline.com/v2/oauth/authorize"
+	oauthTokenURL     = "https://login.eveonline.com/v2/oauth/token"
+	userAgent         = "my-web-server info@example.com"
 )
+
+var oauthScopes = []string{"esi-characters.read_medals.v1"}
 
 type app struct {
 	oauth     oauth2.Config
@@ -31,32 +36,39 @@ func newApp(clientID, clientSecret, callbackURL, sessionKey string) *app {
 		oauth: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
-			Scopes:       []string{"esi-characters.read_medals.v1"},
+			Scopes:       oauthScopes,
 			Endpoint: oauth2.Endpoint{
-				AuthURL:  "https://login.eveonline.com/v2/oauth/authorize",
-				TokenURL: "https://login.eveonline.com/v2/oauth/token",
+				AuthURL:  oauthAuthorizeURL,
+				TokenURL: oauthTokenURL,
 			},
 			RedirectURL: callbackURL,
 		},
 		store:     sessions.NewCookieStore([]byte(sessionKey)),
-		esiClient: goesi.NewAPIClient(http.DefaultClient, "info@example.com"),
+		esiClient: goesi.NewAPIClient(http.DefaultClient, userAgent),
 	}
 	return a
 }
 
-func (a *app) index(w http.ResponseWriter, r *http.Request) {
+// makeHandler decorates our handlers with the current session.
+func (a *app) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessions.Session)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := a.store.Get(r, sessionName)
+		fn(w, r, session)
+	}
+}
+
+func (a *app) index(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
 	fmt.Fprint(w, `<a href="/sso/start">Login</a>`)
 }
 
-func (a *app) ssoStart(w http.ResponseWriter, r *http.Request) {
+func (a *app) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
 	// Generate a random state string
 	b := make([]byte, 16)
 	rand.Read(b)
 	state := base64.URLEncoding.EncodeToString(b)
 	// Store state in session
-	session, _ := a.store.Get(r, sessionName)
-	session.Values["state"] = state
-	err := session.Save(r, w)
+	s.Values["state"] = state
+	err := s.Save(r, w)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -66,7 +78,7 @@ func (a *app) ssoStart(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, url, 302)
 }
 
-func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request) {
+func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
 	ctx := context.Background()
 
 	// get our code and state
@@ -74,8 +86,7 @@ func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.FormValue("state")
 
 	// Verify the state matches our randomly generated string from earlier.
-	session, _ := a.store.Get(r, sessionName)
-	if session.Values["state"] != state {
+	if s.Values["state"] != state {
 		http.Error(w, "invalid state", http.StatusInternalServerError)
 		return
 	}
@@ -105,7 +116,7 @@ func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/show-medals", 302)
 }
 
-func (a *app) showMedals(w http.ResponseWriter, r *http.Request) {
+func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
 	ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, a.tokenSource)
 	medals, _, err := a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(a.characterID), nil)
 	if err != nil {

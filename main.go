@@ -22,10 +22,10 @@ func main() {
 	callbackURL := "http://" + address + callbackPath
 	a := newApp(clientID, clientSecret, callbackURL, sessionKey)
 
-	http.HandleFunc("/", a.index)
-	http.HandleFunc("/sso/start", a.ssoStart)
-	http.HandleFunc(callbackPath, a.ssoCallback)
-	http.HandleFunc("/show-medals", a.showMedals)
+	http.HandleFunc("/", a.makeHandler(a.index))
+	http.HandleFunc("/sso/start", a.makeHandler(a.ssoStart))
+	http.HandleFunc(callbackPath, a.makeHandler(a.ssoCallback))
+	http.HandleFunc("/show-medals", a.makeHandler(a.showMedals))
 
 	fmt.Printf("Running on http://%s\n", address)
 	log.Fatal(http.ListenAndServe(address, nil))
