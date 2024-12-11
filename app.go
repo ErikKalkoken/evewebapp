@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/antihax/goesi"
@@ -50,19 +51,26 @@ func newApp(clientID, clientSecret, callbackURL, sessionKey string) *app {
 	return a
 }
 
-// makeHandler decorates our handlers with the current session.
-func (a *app) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessions.Session)) http.HandlerFunc {
+// makeHandler converts our custom handlers so we can add sessions and handle errors better.
+func (a *app) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessions.Session) (int, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		session, _ := a.store.Get(r, sessionName)
-		fn(w, r, session)
+		s, _ := a.store.Get(r, sessionName)
+		status, err := fn(w, r, s)
+		if err != nil {
+			slog.Error("request failed", "error", err)
+			http.Error(w, err.Error(), status)
+		} else {
+			slog.Info("request", "status", status, "path", r.URL.Path)
+		}
 	}
 }
 
-func (a *app) index(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
+func (a *app) index(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	fmt.Fprint(w, `<a href="/sso/start">Login</a>`)
+	return http.StatusOK, nil
 }
 
-func (a *app) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
+func (a *app) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	// Generate a random state string
 	b := make([]byte, 16)
 	rand.Read(b)
@@ -70,15 +78,15 @@ func (a *app) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Sessi
 	// Store state in session
 	s.Values["state"] = state
 	if err := s.Save(r, w); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 	// Redirect to auth URL
 	url := a.oauth.AuthCodeURL(state, oauth2.AccessTypeOffline)
-	http.Redirect(w, r, url, 302)
+	http.Redirect(w, r, url, http.StatusFound)
+	return http.StatusFound, nil
 }
 
-func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
+func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	ctx := context.Background()
 
 	// get our code and state
@@ -87,56 +95,49 @@ func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Se
 
 	// Verify the state matches our randomly generated string from earlier.
 	if s.Values["state"] != state {
-		http.Error(w, "invalid state", http.StatusInternalServerError)
-		return
+		return http.StatusUnauthorized, fmt.Errorf("invalid state")
 	}
 
 	// Exchange the code for an Access and Refresh token.
 	tok, err := a.oauth.Exchange(ctx, code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	// validate token
 	token, err := validateJWT(ctx, tok.AccessToken)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusUnauthorized, err
 	}
 
 	// Verify the token & extract character details
 	characterID, characterName, err := extractCharacter(token)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 	a.characters[characterID] = characterName
 	a.tokens[characterID] = a.oauth.TokenSource(ctx, tok)
 	s.Values["characterID"] = characterID
 	if err := s.Save(r, w); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 	http.Redirect(w, r, "/show-medals", 302)
+	return http.StatusFound, nil
 }
 
-func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) {
+func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	characterID, ok := s.Values["characterID"].(int)
 	if !ok {
-		http.Error(w, "not logged in", http.StatusUnauthorized)
-		return
+		return http.StatusUnauthorized, fmt.Errorf("not logged int")
 	}
 	token, ok := a.tokens[characterID]
 	if !ok {
-		http.Error(w, "token not found", http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, fmt.Errorf("token not found")
 	}
 	ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, token)
 	medals, _, err := a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(characterID), nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 	fmt.Fprintf(w, "Medals for %s\n\n", a.characters[characterID])
 	if len(medals) == 0 {
@@ -146,4 +147,5 @@ func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Ses
 			fmt.Fprintf(w, "%s\n", m.Title)
 		}
 	}
+	return http.StatusOK, nil
 }
