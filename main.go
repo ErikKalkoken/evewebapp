@@ -24,20 +24,21 @@ func main() {
 	if clientID == "" || clientSecret == "" || sessionKey == "" {
 		log.Fatal("SSO client ID, client secret or session key not defined")
 	}
+
 	callbackURL := "http://" + address + callbackPath
-	a, err := newApp(clientID, clientSecret, callbackURL, sessionKey)
+	app, err := newApp(clientID, clientSecret, callbackURL, sessionKey)
 	if err != nil {
 		log.Fatalf("could not initialize app: %s", err)
 	}
 
-	http.HandleFunc("/", a.makeHandler(a.index))
-	http.HandleFunc("/sso/start", a.makeHandler(a.ssoStart))
-	http.HandleFunc(callbackPath, a.makeHandler(a.ssoCallback))
-	http.HandleFunc("/show-medals", a.makeHandler(a.showMedals))
+	httpServer := &http.Server{
+		Addr:    address,
+		Handler: app.rootHandler(),
+	}
 
 	go func() {
 		slog.Info("Running", "address", "http://"+address)
-		if err := http.ListenAndServe(address, nil); err != nil {
+		if err := httpServer.ListenAndServe(); err != nil {
 			log.Fatal("server aborted", "error", err)
 		}
 	}()

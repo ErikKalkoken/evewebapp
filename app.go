@@ -84,6 +84,15 @@ func (a *app) loadTemplates() error {
 	return nil
 }
 
+func (a *app) rootHandler() http.Handler {
+	router := http.NewServeMux()
+	router.HandleFunc("/", a.makeHandler(a.index))
+	router.HandleFunc("/sso/start", a.makeHandler(a.ssoStart))
+	router.HandleFunc(callbackPath, a.makeHandler(a.ssoCallback))
+	router.HandleFunc("/show-medals", a.makeHandler(a.showMedals))
+	return router
+}
+
 // makeHandler converts our custom handlers so we can add sessions and handle errors better.
 func (a *app) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessions.Session) (int, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
