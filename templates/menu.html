@@ -1,25 +1,40 @@
 <nav class="navbar navbar-expand-lg bg-body-tertiary">
-  <div class="container-fluid">
-    <a class="navbar-brand" href="#">My Eve App</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navbarSupportedContent">
-      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-        <li class="nav-item">
-          <a class="nav-link active" aria-current="page" href="/">Home</a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link" href="/medals">Medals</a>
-        </li>
-        <li class="nav-item">
-          {{if .User }}
-            <a class="nav-link" href="/sso/start">{{.User.Name}}</a>
-          {{else}}
-            <a class="nav-link" href="/sso/start">Login</a>
-          {{end}}
-        </li>
-      </ul>
+    <div class="container-fluid">
+        <a class="navbar-brand" href="#">My Eve App</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarSupportedContent">
+            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                <li class="nav-item">
+                    <a class="nav-link active" aria-current="page" href="/">Home</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {{if not .User}}disabled{{end}}" href="/medals">Medals</a>
+                </li>
+            </ul>
+            <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+                {{if .User }}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <img src="https://images.evetech.net/characters/{{.User.ID}}/portrait?size=32" style="border-radius: 50%; width: 24px; height 24px"/>
+                        </a>
+                        <ul class="dropdown-menu" aria-labelledby="navbarDropdown">
+                            <li>
+                                <a class="dropdown-item disabled" href="#">
+                                    Signed in as<br><strong>{{.User.Name}}</strong>
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/sso/logout">Logout</a></li>
+                        </ul>
+                    </li>
+                {{else}}
+                    <li class="nav-item">
+                        <a class="btn btn-outline-success" href="/sso/start">Login</a>
+                    </li>
+                {{end}}
+            </ul>
+        </div>
     </div>
-  </div>
 </nav>

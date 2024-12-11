@@ -3,22 +3,24 @@
 {{define "title"}}Medals{{end}}
 
 {{define "content"}}
-    <h1>Medals for {{.User.Name}}</h1>
+    {{if .User}}
+        <h1>Medals for {{.User.Name}}</h1>
 
-    <table class="table">
-        <tr>
-            <th>Date</th>
-            <th>Title</th>
-            <th>Description</th>
-            <th>Reason</th>
-        </tr>
-        {{range .Medals}}
+        <table class="table">
             <tr>
-                <td>{{.Date.Format "2006-01-02 15:04"}}</td>
-                <td>{{.Title}}</td>
-                <td>{{.Description}}</td>
-                <td>{{.Reason}}</td>
+                <th>Date</th>
+                <th>Title</th>
+                <th>Description</th>
+                <th>Reason</th>
             </tr>
-        {{end}}
-    </table>
+            {{range .Medals}}
+                <tr>
+                    <td>{{.Date.Format "2006-01-02 15:04"}}</td>
+                    <td>{{.Title}}</td>
+                    <td>{{.Description}}</td>
+                    <td>{{.Reason}}</td>
+                </tr>
+            {{end}}
+        </table>
+    {{end}}
 {{end}}

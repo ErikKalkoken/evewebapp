@@ -93,6 +93,7 @@ func (a *app) rootHandler() http.Handler {
 	router.HandleFunc("/", a.makeHandler(a.index))
 	router.HandleFunc("/sso/start", a.makeHandler(a.ssoStart))
 	router.HandleFunc(callbackPath, a.makeHandler(a.ssoCallback))
+	router.HandleFunc("/sso/logout", a.makeHandler(a.ssoLogout))
 	router.HandleFunc("/medals", a.makeHandler(a.showMedals))
 	return router
 }
@@ -196,15 +197,25 @@ func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Se
 	return http.StatusFound, nil
 }
 
+func (a *app) ssoLogout(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
+	s.Values["characterID"] = 0
+	if err := s.Save(r, w); err != nil {
+		return http.StatusInternalServerError, err
+	}
+	http.Redirect(w, r, "/", 302)
+	return http.StatusFound, nil
+}
+
 func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	user := a.currentUser(s)
-	if user == nil {
-		return http.StatusUnauthorized, fmt.Errorf("not logged in")
-	}
-	ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, user.Token)
-	medals, _, err := a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(user.ID), nil)
-	if err != nil {
-		return http.StatusInternalServerError, err
+	var err error
+	var medals []esi.GetCharactersCharacterIdMedals200Ok
+	if user != nil {
+		ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, user.Token)
+		medals, _, err = a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(user.ID), nil)
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
 	}
 	data := struct {
 		Medals []esi.GetCharactersCharacterIdMedals200Ok

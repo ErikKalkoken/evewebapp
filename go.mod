@@ -1,4 +1,4 @@
-module example/evewebserver
+module example/evewebapp
 
 go 1.23.3
 
