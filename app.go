@@ -31,14 +31,19 @@ var (
 	templatesFS embed.FS
 )
 
+type User struct {
+	ID    int
+	Name  string
+	Token oauth2.TokenSource
+}
+
 type app struct {
 	oauth     oauth2.Config
 	esiClient *goesi.APIClient
 	store     *sessions.CookieStore
 	templates map[string]*template.Template
 
-	tokens     map[int]oauth2.TokenSource
-	characters map[int]string
+	users map[int]*User
 }
 
 func newApp(clientID, clientSecret, callbackURL, sessionKey string) (*app, error) {
@@ -53,11 +58,10 @@ func newApp(clientID, clientSecret, callbackURL, sessionKey string) (*app, error
 			},
 			RedirectURL: callbackURL,
 		},
-		store:      sessions.NewCookieStore([]byte(sessionKey)),
-		esiClient:  goesi.NewAPIClient(http.DefaultClient, userAgent),
-		tokens:     make(map[int]oauth2.TokenSource),
-		characters: make(map[int]string),
-		templates:  make(map[string]*template.Template),
+		store:     sessions.NewCookieStore([]byte(sessionKey)),
+		esiClient: goesi.NewAPIClient(http.DefaultClient, userAgent),
+		users:     make(map[int]*User),
+		templates: make(map[string]*template.Template),
 	}
 	if err := a.loadTemplates(); err != nil {
 		return nil, fmt.Errorf("loading templates: %w", err)
@@ -75,7 +79,7 @@ func (a *app) loadTemplates() error {
 		if f.IsDir() {
 			continue
 		}
-		t, err := template.ParseFS(templatesFS, "templates/"+f.Name(), "templates/base.html")
+		t, err := template.ParseFS(templatesFS, "templates/"+f.Name(), "templates/base.html", "templates/menu.html")
 		if err != nil {
 			return err
 		}
@@ -89,7 +93,7 @@ func (a *app) rootHandler() http.Handler {
 	router.HandleFunc("/", a.makeHandler(a.index))
 	router.HandleFunc("/sso/start", a.makeHandler(a.ssoStart))
 	router.HandleFunc(callbackPath, a.makeHandler(a.ssoCallback))
-	router.HandleFunc("/show-medals", a.makeHandler(a.showMedals))
+	router.HandleFunc("/medals", a.makeHandler(a.showMedals))
 	return router
 }
 
@@ -112,8 +116,29 @@ func (a *app) index(w http.ResponseWriter, r *http.Request, s *sessions.Session)
 	if !ok {
 		return http.StatusInternalServerError, fmt.Errorf("index.html")
 	}
-	t.Execute(w, nil)
+	data := struct {
+		User *User
+	}{
+		a.currentUser(s),
+	}
+	t.Execute(w, data)
 	return http.StatusOK, nil
+}
+
+func (a *app) currentUser(s *sessions.Session) *User {
+	x, ok := s.Values["characterID"]
+	if !ok {
+		return nil
+	}
+	id, ok := x.(int)
+	if !ok {
+		return nil
+	}
+	user, ok := a.users[id]
+	if !ok {
+		return nil
+	}
+	return user
 }
 
 func (a *app) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
@@ -161,36 +186,32 @@ func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Se
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	a.characters[characterID] = characterName
-	a.tokens[characterID] = a.oauth.TokenSource(ctx, tok)
+	u := &User{ID: characterID, Name: characterName, Token: a.oauth.TokenSource(ctx, tok)}
+	a.users[characterID] = u
 	s.Values["characterID"] = characterID
 	if err := s.Save(r, w); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	http.Redirect(w, r, "/show-medals", 302)
+	http.Redirect(w, r, "/medals", 302)
 	return http.StatusFound, nil
 }
 
 func (a *app) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
-	characterID, ok := s.Values["characterID"].(int)
-	if !ok {
-		return http.StatusUnauthorized, fmt.Errorf("not logged int")
+	user := a.currentUser(s)
+	if user == nil {
+		return http.StatusUnauthorized, fmt.Errorf("not logged in")
 	}
-	token, ok := a.tokens[characterID]
-	if !ok {
-		return http.StatusInternalServerError, fmt.Errorf("token not found")
-	}
-	ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, token)
-	medals, _, err := a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(characterID), nil)
+	ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, user.Token)
+	medals, _, err := a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(user.ID), nil)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	data := struct {
-		Character string
-		Medals    []esi.GetCharactersCharacterIdMedals200Ok
+		Medals []esi.GetCharactersCharacterIdMedals200Ok
+		User   *User
 	}{
-		a.characters[characterID],
 		medals,
+		user,
 	}
 	t, ok := a.templates["medals.html"]
 	if !ok {
