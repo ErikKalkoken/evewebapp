@@ -193,7 +193,7 @@ func (a *app) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Se
 	if err := s.Save(r, w); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	http.Redirect(w, r, "/medals", 302)
+	http.Redirect(w, r, "/medals", http.StatusFound)
 	return http.StatusFound, nil
 }
 
