@@ -1,0 +1,37 @@
+package components
+
+import (
+	"example/evewebapp/model"
+	"github.com/antihax/goesi/esi"
+)
+
+templ Home(user *model.User) {
+	@base("Home", user) {
+		<p>Welcome!</p>
+	}
+}
+
+templ Medals(user *model.User, medals []esi.GetCharactersCharacterIdMedals200Ok) {
+	@base("Medals", user) {
+		if user != nil{
+			<h1>Medals for { user.Name }</h1>
+
+			<table class="table">
+				<tr>
+					<th>Date</th>
+					<th>Title</th>
+					<th>Description</th>
+					<th>Reason</th>
+				</tr>
+				for _, m := range medals{
+					<tr>
+						<td>{ m.Date.Format("2006-01-02 15:04") }</td>
+						<td>{ m.Title }</td>
+						<td>{ m.Description }</td>
+						<td>{ m.Reason }</td>
+					</tr>
+				}
+			</table>
+		}
+	}
+}

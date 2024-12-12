@@ -3,6 +3,7 @@ module example/evewebapp
 go 1.23.3
 
 require (
+	github.com/a-h/templ v0.2.793
 	github.com/antihax/goesi v0.0.0-20241203030839-a52ebd1b1642
 	github.com/gorilla/sessions v1.4.0
 	github.com/joho/godotenv v1.5.1

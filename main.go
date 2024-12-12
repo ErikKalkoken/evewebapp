@@ -1,6 +1,7 @@
 package main
 
 import (
+	"example/evewebapp/handler"
 	"log"
 	"log/slog"
 	"net/http"
@@ -26,14 +27,14 @@ func main() {
 	}
 
 	callbackURL := "http://" + address + callbackPath
-	app, err := newApp(clientID, clientSecret, callbackURL, sessionKey)
+	app, err := handler.NewHandler(clientID, clientSecret, callbackURL, sessionKey)
 	if err != nil {
 		log.Fatalf("could not initialize app: %s", err)
 	}
 
 	httpServer := &http.Server{
 		Addr:    address,
-		Handler: app.rootHandler(),
+		Handler: app.RootHandler(),
 	}
 
 	go func() {
