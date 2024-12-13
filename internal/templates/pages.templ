@@ -1,10 +1,6 @@
 package templates
 
 import (
-	"time"
-
-	"github.com/antihax/goesi/esi"
-
 	"example/evewebapp/internal/store"
 )
 
@@ -14,27 +10,10 @@ templ Home(user *store.User) {
 	}
 }
 
-templ Medals(user *store.User, medals []esi.GetCharactersCharacterIdMedals200Ok) {
+templ Location(user *store.User, location, ship string) {
 	@base("Medals", user) {
 		if user != nil{
-			<h1>Medals for { user.Name }</h1>
-
-			<table class="table">
-				<tr>
-					<th>Date</th>
-					<th>Title</th>
-					<th>Description</th>
-					<th>Reason</th>
-				</tr>
-				for _, m := range medals{
-					<tr>
-						<td>{ m.Date.Format(time.RFC3339) }</td>
-						<td>{ m.Title }</td>
-						<td>{ m.Description }</td>
-						<td>{ m.Reason }</td>
-					</tr>
-				}
-			</table>
+			<p><b>{ user.Name }</b> is flying a <b>{ ship }</b> in <b>{ location }</b>.</p>
 		}
 	}
 }

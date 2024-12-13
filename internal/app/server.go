@@ -15,7 +15,6 @@ import (
 	"syscall"
 
 	"github.com/antihax/goesi"
-	"github.com/antihax/goesi/esi"
 	"github.com/gorilla/sessions"
 )
 
@@ -28,7 +27,7 @@ const (
 	userAgent   = "my-web-server info@example.com"
 )
 
-var oauthScopes = []string{"esi-characters.read_medals.v1"}
+var oauthScopes = []string{"esi-location.read_location.v1", "esi-location.read_ship_type.v1"}
 
 type Server struct {
 	cookieStore *sessions.CookieStore
@@ -51,10 +50,10 @@ func New(clientID, clientSecret, redirectURL, sessionKey string, userStore *stor
 func (s *Server) Start() error {
 	router := http.NewServeMux()
 	router.HandleFunc("/", s.makeHandler(s.home))
-	router.HandleFunc("/sso/start", s.makeHandler(s.ssoStart))
-	router.HandleFunc("/sso/callback", s.makeHandler(s.ssoCallback))
-	router.HandleFunc("/sso/logout", s.makeHandler(s.ssoLogout))
-	router.HandleFunc("/medals", s.makeHandler(s.showMedals))
+	router.HandleFunc("/sso/start", s.makeHandler(s.ssoStartHandler))
+	router.HandleFunc("/sso/callback", s.makeHandler(s.ssoCallbackHandler))
+	router.HandleFunc("/sso/logout", s.makeHandler(s.ssoLogoutHandler))
+	router.HandleFunc("/location", s.makeHandler(s.showLocationHandler))
 	s.httpServer = &http.Server{
 		Addr:    address,
 		Handler: router,
@@ -109,7 +108,7 @@ func (s *Server) currentUser(session *sessions.Session) *store.User {
 	return s.userStore.Get(id)
 }
 
-func (s *Server) ssoStart(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
+func (s *Server) ssoStartHandler(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
 	// Generate a random state string
 	b := make([]byte, 16)
 	rand.Read(b)
@@ -125,7 +124,7 @@ func (s *Server) ssoStart(w http.ResponseWriter, r *http.Request, session *sessi
 	return http.StatusFound, nil
 }
 
-func (s *Server) ssoCallback(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
+func (s *Server) ssoCallbackHandler(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
 	// get our code and state
 	code := r.FormValue("code")
 	state := r.FormValue("state")
@@ -157,11 +156,11 @@ func (s *Server) ssoCallback(w http.ResponseWriter, r *http.Request, session *se
 	if err := session.Save(r, w); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	http.Redirect(w, r, "/medals", http.StatusFound)
+	http.Redirect(w, r, "/location", http.StatusFound)
 	return http.StatusFound, nil
 }
 
-func (s *Server) ssoLogout(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
+func (s *Server) ssoLogoutHandler(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
 	session.Values["characterID"] = 0
 	if err := session.Save(r, w); err != nil {
 		return http.StatusInternalServerError, err
@@ -170,18 +169,40 @@ func (s *Server) ssoLogout(w http.ResponseWriter, r *http.Request, session *sess
 	return http.StatusFound, nil
 }
 
-func (s *Server) showMedals(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
+func (s *Server) showLocationHandler(w http.ResponseWriter, r *http.Request, session *sessions.Session) (int, error) {
 	user := s.currentUser(session)
-	var err error
-	var medals []esi.GetCharactersCharacterIdMedals200Ok
+	var location, ship string
 	if user != nil {
 		ctx := context.WithValue(r.Context(), goesi.ContextOAuth2, user.Token)
-		medals, _, err = s.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(user.ID), nil)
+		locationResp, _, err := s.esiClient.ESI.LocationApi.GetCharactersCharacterIdLocation(ctx, int32(user.ID), nil)
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
+		ids := []int32{locationResp.SolarSystemId}
+		if locationResp.StationId != 0 {
+			ids = append(ids, locationResp.StationId)
+		}
+		shipResp, _, err := s.esiClient.ESI.LocationApi.GetCharactersCharacterIdShip(ctx, int32(user.ID), nil)
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		ids = append(ids, shipResp.ShipTypeId)
+		xx, _, err := s.esiClient.ESI.UniverseApi.PostUniverseNames(ctx, ids, nil)
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		ids2names := make(map[int32]string)
+		for _, x := range xx {
+			ids2names[x.Id] = x.Name
+		}
+		if locationResp.StationId != 0 {
+			location = ids2names[locationResp.StationId]
+		} else {
+			location = ids2names[locationResp.SolarSystemId]
+		}
+		ship = ids2names[shipResp.ShipTypeId]
 	}
-	if err := templates.Medals(user, medals).Render(context.Background(), w); err != nil {
+	if err := templates.Location(user, location, ship).Render(context.Background(), w); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil
