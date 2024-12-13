@@ -1,52 +1,29 @@
 package main
 
 import (
-	"example/evewebapp/internal/server"
+	"example/evewebapp/internal/app"
+	"example/evewebapp/internal/store"
 	"log"
-	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
-)
-
-const (
-	address      = "127.0.0.1:8000"
-	callbackPath = "/sso/callback"
 )
 
 func main() {
 	godotenv.Load() // reading from .env file is optional
 	clientID := os.Getenv("EVE_CLIENT_ID")
 	clientSecret := os.Getenv("EVE_CLIENT_SECRET")
-	sessionKey := os.Getenv("SESSION_KEY")
+	redirectURL := os.Getenv("EVE_REDIRECT_URL")
+	sessionKey := os.Getenv("EVE_SESSION_KEY")
 	if clientID == "" || clientSecret == "" || sessionKey == "" {
-		log.Fatal("SSO client ID, client secret or session key not defined")
+		log.Fatal("client ID, client secret, redirect URL or session key not defined")
 	}
-
-	callbackURL := "http://" + address + callbackPath
-	app, err := server.New(clientID, clientSecret, callbackURL, sessionKey)
-	if err != nil {
-		log.Fatalf("could not initialize app: %s", err)
+	userStore := store.NewUserStore()
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	server := app.New(clientID, clientSecret, redirectURL, sessionKey, userStore, httpClient)
+	if err := server.Start(); err != nil {
+		log.Fatal(err)
 	}
-
-	httpServer := &http.Server{
-		Addr:    address,
-		Handler: app.RootHandler(),
-	}
-
-	go func() {
-		slog.Info("Running", "address", "http://"+address)
-		if err := httpServer.ListenAndServe(); err != nil {
-			log.Fatal("server aborted", "error", err)
-		}
-	}()
-
-	// Ensure graceful shutdown
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
-	slog.Info("shutdown complete")
 }
