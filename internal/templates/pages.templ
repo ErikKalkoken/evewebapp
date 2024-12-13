@@ -1,17 +1,20 @@
-package components
+package templates
 
 import (
-	"example/evewebapp/model"
+	"time"
+
 	"github.com/antihax/goesi/esi"
+
+	"example/evewebapp/internal/store"
 )
 
-templ Home(user *model.User) {
+templ Home(user *store.User) {
 	@base("Home", user) {
 		<p>Welcome!</p>
 	}
 }
 
-templ Medals(user *model.User, medals []esi.GetCharactersCharacterIdMedals200Ok) {
+templ Medals(user *store.User, medals []esi.GetCharactersCharacterIdMedals200Ok) {
 	@base("Medals", user) {
 		if user != nil{
 			<h1>Medals for { user.Name }</h1>
@@ -25,7 +28,7 @@ templ Medals(user *model.User, medals []esi.GetCharactersCharacterIdMedals200Ok)
 				</tr>
 				for _, m := range medals{
 					<tr>
-						<td>{ m.Date.Format("2006-01-02 15:04") }</td>
+						<td>{ m.Date.Format(time.RFC3339) }</td>
 						<td>{ m.Title }</td>
 						<td>{ m.Description }</td>
 						<td>{ m.Reason }</td>

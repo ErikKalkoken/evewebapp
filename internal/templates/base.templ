@@ -1,9 +1,9 @@
-package components
+package templates
 
-import "example/evewebapp/model"
+import "example/evewebapp/internal/store"
 
 
-templ base(title string, user *model.User){
+templ base(title string, user *store.User){
 	<!doctype html>
 	<html lang="en" data-bs-theme="dark">
 		<head>

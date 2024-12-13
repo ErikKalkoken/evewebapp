@@ -3,4 +3,4 @@ generate:
 
 run:
 	@templ generate
-	@go run . ;
+	@go run ./cmd ;

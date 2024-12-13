@@ -1,11 +1,11 @@
-package handler
+package server
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"example/evewebapp/components"
-	"example/evewebapp/model"
+	"example/evewebapp/internal/store"
+	"example/evewebapp/internal/templates"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,16 +25,16 @@ const (
 
 var oauthScopes = []string{"esi-characters.read_medals.v1"}
 
-type Handler struct {
-	oauth     oauth2.Config
-	esiClient *goesi.APIClient
-	store     *sessions.CookieStore
+type Server struct {
+	oauth       oauth2.Config
+	esiClient   *goesi.APIClient
+	cookieStore *sessions.CookieStore
 
-	users map[int]*model.User
+	userStore *store.UserStore
 }
 
-func NewHandler(clientID, clientSecret, callbackURL, sessionKey string) (*Handler, error) {
-	a := &Handler{
+func New(clientID, clientSecret, callbackURL, sessionKey string) (*Server, error) {
+	a := &Server{
 		oauth: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -45,14 +45,14 @@ func NewHandler(clientID, clientSecret, callbackURL, sessionKey string) (*Handle
 			},
 			RedirectURL: callbackURL,
 		},
-		store:     sessions.NewCookieStore([]byte(sessionKey)),
-		esiClient: goesi.NewAPIClient(http.DefaultClient, userAgent),
-		users:     make(map[int]*model.User),
+		cookieStore: sessions.NewCookieStore([]byte(sessionKey)),
+		esiClient:   goesi.NewAPIClient(http.DefaultClient, userAgent),
+		userStore:   store.NewUserStore(),
 	}
 	return a, nil
 }
 
-func (a *Handler) RootHandler() http.Handler {
+func (a *Server) RootHandler() http.Handler {
 	router := http.NewServeMux()
 	router.HandleFunc("/", a.makeHandler(a.home))
 	router.HandleFunc("/sso/start", a.makeHandler(a.ssoStart))
@@ -63,9 +63,9 @@ func (a *Handler) RootHandler() http.Handler {
 }
 
 // makeHandler converts our custom handlers so we can add sessions and handle errors better.
-func (a *Handler) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessions.Session) (int, error)) http.HandlerFunc {
+func (a *Server) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessions.Session) (int, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s, _ := a.store.Get(r, sessionName)
+		s, _ := a.cookieStore.Get(r, sessionName)
 		status, err := fn(w, r, s)
 		if err != nil {
 			slog.Error("request failed", "error", err)
@@ -76,16 +76,16 @@ func (a *Handler) makeHandler(fn func(http.ResponseWriter, *http.Request, *sessi
 	}
 }
 
-func (a *Handler) home(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
+func (a *Server) home(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	user := a.currentUser(s)
-	err := components.Home(user).Render(context.Background(), w)
+	err := templates.Home(user).Render(context.Background(), w)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil
 }
 
-func (a *Handler) currentUser(s *sessions.Session) *model.User {
+func (a *Server) currentUser(s *sessions.Session) *store.User {
 	x, ok := s.Values["characterID"]
 	if !ok {
 		return nil
@@ -94,14 +94,10 @@ func (a *Handler) currentUser(s *sessions.Session) *model.User {
 	if !ok {
 		return nil
 	}
-	user, ok := a.users[id]
-	if !ok {
-		return nil
-	}
-	return user
+	return a.userStore.Get(id)
 }
 
-func (a *Handler) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
+func (a *Server) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	// Generate a random state string
 	b := make([]byte, 16)
 	rand.Read(b)
@@ -117,9 +113,7 @@ func (a *Handler) ssoStart(w http.ResponseWriter, r *http.Request, s *sessions.S
 	return http.StatusFound, nil
 }
 
-func (a *Handler) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
-	ctx := context.Background()
-
+func (a *Server) ssoCallback(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	// get our code and state
 	code := r.FormValue("code")
 	state := r.FormValue("state")
@@ -130,13 +124,13 @@ func (a *Handler) ssoCallback(w http.ResponseWriter, r *http.Request, s *session
 	}
 
 	// Exchange the code for an Access and Refresh token.
-	tok, err := a.oauth.Exchange(ctx, code)
+	tok, err := a.oauth.Exchange(r.Context(), code)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 
 	// validate token
-	token, err := validateJWT(ctx, tok.AccessToken)
+	token, err := validateJWT(r.Context(), tok.AccessToken)
 	if err != nil {
 		return http.StatusUnauthorized, err
 	}
@@ -146,8 +140,7 @@ func (a *Handler) ssoCallback(w http.ResponseWriter, r *http.Request, s *session
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	u := &model.User{ID: characterID, Name: characterName, Token: a.oauth.TokenSource(ctx, tok)}
-	a.users[characterID] = u
+	a.userStore.Save(characterID, characterName, a.oauth.TokenSource(r.Context(), tok))
 	s.Values["characterID"] = characterID
 	if err := s.Save(r, w); err != nil {
 		return http.StatusInternalServerError, err
@@ -156,7 +149,7 @@ func (a *Handler) ssoCallback(w http.ResponseWriter, r *http.Request, s *session
 	return http.StatusFound, nil
 }
 
-func (a *Handler) ssoLogout(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
+func (a *Server) ssoLogout(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	s.Values["characterID"] = 0
 	if err := s.Save(r, w); err != nil {
 		return http.StatusInternalServerError, err
@@ -165,18 +158,18 @@ func (a *Handler) ssoLogout(w http.ResponseWriter, r *http.Request, s *sessions.
 	return http.StatusFound, nil
 }
 
-func (a *Handler) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
+func (a *Server) showMedals(w http.ResponseWriter, r *http.Request, s *sessions.Session) (int, error) {
 	user := a.currentUser(s)
 	var err error
 	var medals []esi.GetCharactersCharacterIdMedals200Ok
 	if user != nil {
-		ctx := context.WithValue(context.Background(), goesi.ContextOAuth2, user.Token)
+		ctx := context.WithValue(r.Context(), goesi.ContextOAuth2, user.Token)
 		medals, _, err = a.esiClient.ESI.CharacterApi.GetCharactersCharacterIdMedals(ctx, int32(user.ID), nil)
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
 	}
-	if err := components.Medals(user, medals).Render(context.Background(), w); err != nil {
+	if err := templates.Medals(user, medals).Render(context.Background(), w); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil

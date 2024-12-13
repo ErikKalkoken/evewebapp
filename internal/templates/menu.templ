@@ -1,9 +1,12 @@
-package components
+package templates
 
-import "example/evewebapp/model"
-import "fmt"
+import (
+    "fmt"
 
-templ menu(user *model.User) {
+    "example/evewebapp/internal/store"
+)
+
+templ menu(user *store.User) {
     <nav class="navbar navbar-expand-lg bg-body-tertiary">
         <div class="container">
             <a class="navbar-brand" href="#">My Eve App</a>
